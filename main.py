@@ -162,8 +162,6 @@ def backup_all_paths(cfg, ts_folder):
     backup_root = Path(cfg["backup_root"])
     timestamp = ts_folder
 
-    drives_used = set()
-
     # 1) Services
     for svc in cfg["services"]:
         for src in svc["paths"]:
@@ -173,7 +171,6 @@ def backup_all_paths(cfg, ts_folder):
                 continue
 
             drive = src_path.drive.replace(":", "")
-            drives_used.add(drive)
 
             dst_base = backup_root / timestamp / drive
             (dst_base).mkdir(parents=True, exist_ok=True)
@@ -197,7 +194,6 @@ def backup_all_paths(cfg, ts_folder):
             continue
 
         drive = src.drive.replace(":", "")
-        drives_used.add(drive)
 
         dst_base = backup_root / timestamp / drive
         dst_base.mkdir(parents=True, exist_ok=True)
@@ -208,8 +204,6 @@ def backup_all_paths(cfg, ts_folder):
 
         dst_zip = docker_dir / f"{name}.zip"
         zip_path(src, dst_zip)
-
-    return drives_used
 
 # ---------------------------------------------
 # Retention pruning
@@ -308,7 +302,7 @@ def do_backup(cfg):
     stop_docker(cfg)
 
     # Backup all paths
-    drives_used = backup_all_paths(cfg, ts)
+    backup_all_paths(cfg, ts)
 
     # Restart (ok if fails)
     start_services(cfg)
