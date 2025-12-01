@@ -73,11 +73,16 @@ def stop_services(cfg):
         name = svc["name"]
         log("INFO", "SERVICE", f'Stopping "{name}"')
         ok, out, err, code = run_cmd(f'net stop "{name}"')
-        if not ok:
-            reason = err or out or f"Return code {code}"
-            log("ERRO", "SERVICE", f'Failed stopping "{name}": {reason}')
-            sys.exit(1)
-        log("DONE", "SERVICE", f'Stopped "{name}"')
+        if ok:
+            log("DONE", "SERVICE", f'Stopped "{name}"')
+            continue
+        combined = (out + err)
+        if "3521" in combined:
+            log("DONE", "SERVICE", f'"{name}" was not running')
+            continue
+        reason = err or out or f"Return code {code}"
+        log("ERRO", "SERVICE", f'Failed stopping "{name}": {reason}')
+        sys.exit(1)
 
 def start_services(cfg):
     for svc in cfg["services"]:
@@ -306,7 +311,7 @@ def do_backup(cfg):
     stop_docker(cfg)
 
     # Backup all paths
-    drives_used = backup_all_paths(cfg, ts.name)
+    drives_used = backup_all_paths(cfg, ts)
 
     # Restart (ok if fails)
     start_services(cfg)
