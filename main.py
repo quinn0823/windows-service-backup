@@ -261,7 +261,6 @@ def prune_versions(cfg):
 # Full backup process
 # ---------------------------------------------
 def do_backup(cfg):
-    print("=== Windows Service Backup Started ===")
 
     backup_root = Path(cfg["backup_root"])
     ts = timestamp_folder()
@@ -292,43 +291,65 @@ def do_backup(cfg):
     # Prune old versions
     prune_versions(cfg)
 
-    log("DONE", "CORE", "Backup completed")
-
     LOG_FILE_HANDLE.close()
     LOG_FILE_HANDLE = None
-
-    print("=== Windows Service Backup Completed ===")
 
 # ---------------------------------------------
 # Main
 # ---------------------------------------------
 def main():
+    print("""Windows Service Backup
+The MIT License (MIT)
+Copyright (c) 2025 Jonathan Chiu
+""")
+
+    usage = """Usage:
+    python main.py [command]
+
+Commands:
+    backup           Perform backup of services and docker
+    help             Show this help message
+    start            Start services and docker containers
+    startDocker      Start docker containers only
+    startServices    Start services only
+    stop             Stop services and docker containers
+    stopDocker       Stop docker containers only
+    stopServices     Stop services only"""
+
     if len(sys.argv) < 2:
-        print("Usage: python main.py [backup | stop | start]")
-        return
+        print("[INFO] Run \"python main.py help\" for usage.")
+    else:
+        mode = sys.argv[1].lower()
+        cfg = load_config()
 
-    mode = sys.argv[1].lower()
-    cfg = load_config()
+        if mode == "backup":
+            do_backup(cfg)
 
-    if mode == "stop":
-        print("=== Windows Service Backup Started ===")
-        stop_services(cfg)
-        stop_docker(cfg)
-        print("=== Windows Service Backup Completed ===")
-        return
+        elif mode == "help":
+            print(usage)
 
-    if mode == "start":
-        print("=== Windows Service Backup Started ===")
-        start_services(cfg)
-        start_docker(cfg)
-        print("=== Windows Service Backup Completed ===")
-        return
+        elif mode == "start":
+            start_services(cfg)
+            start_docker(cfg)
+        elif mode == "startDocker":
+            start_docker(cfg)
+        elif mode == "startServices":
+            start_services(cfg)
 
-    if mode == "backup":
-        do_backup(cfg)
-        return
+        elif mode == "stop":
+            stop_services(cfg)
+            stop_docker(cfg)
+        elif mode == "stopDocker":
+            stop_docker(cfg)
+        elif mode == "stopServices":
+            stop_services(cfg)
 
-    print(f"Unknown mode: {mode}")
+        else:
+            print(f"""[ERRO] Unknown command "{mode}"
+    [INFO] Run "python main.py help" for usage.""")
+
+    print("""
+Run complete.""")
 
 if __name__ == "__main__":
     main()
