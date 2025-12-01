@@ -2,20 +2,19 @@
 # The MIT License (MIT)
 # Copyright (c) 2025 Jonathan Chiu
 
-import os
 import sys
 import json
 import shutil
 import subprocess
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 import zipfile
 
 # ---------------------------------------------
 # Globals
 # ---------------------------------------------
 CONFIG_FILE = "config.json"
-LOG_FILE_HANDLE = None   # only set in backup mode
+LOG_FILE_HANDLE = None
 CURRENT_LOG_PATH = None
 
 # ---------------------------------------------
@@ -31,11 +30,10 @@ def timestamp_folder():
 # Logging
 # ---------------------------------------------
 def log(level, comp, msg):
-    """Print and (if in backup mode) also write to log.txt."""
+    """Print + optional log file write."""
     line = f"{now()} [{level}] {comp:<7} {msg}"
     print(line)
 
-    global LOG_FILE_HANDLE
     if LOG_FILE_HANDLE:
         LOG_FILE_HANDLE.write(line + "\n")
         LOG_FILE_HANDLE.flush()
@@ -46,7 +44,7 @@ def log(level, comp, msg):
 def load_config():
     cfg_path = Path(CONFIG_FILE)
     if not cfg_path.exists():
-        print(f"[ERRO] CONFIG config.json not found in: {cfg_path.resolve()}")
+        print(f"[ERRO] CONFIG config.json not found: {cfg_path.resolve()}")
         sys.exit(1)
 
     try:
@@ -72,14 +70,17 @@ def stop_services(cfg):
     for svc in cfg["services"]:
         name = svc["name"]
         log("INFO", "SERVICE", f'Stopping "{name}"')
+
         ok, out, err, code = run_cmd(f'net stop "{name}"')
         if ok:
             log("DONE", "SERVICE", f'Stopped "{name}"')
             continue
-        combined = (out + err)
+
+        combined = out + err
         if "3521" in combined:
             log("DONE", "SERVICE", f'"{name}" was not running')
             continue
+
         reason = err or out or f"Return code {code}"
         log("ERRO", "SERVICE", f'Failed stopping "{name}": {reason}')
         sys.exit(1)
@@ -88,21 +89,22 @@ def start_services(cfg):
     for svc in cfg["services"]:
         name = svc["name"]
         log("INFO", "SERVICE", f'Starting "{name}"')
+
         ok, out, err, code = run_cmd(f'net start "{name}"')
-        if not ok:
+        if ok:
+            log("DONE", "SERVICE", f'Started "{name}"')
+        else:
             reason = err or out or f"Return code {code}"
             log("WARN", "SERVICE", f'Failed starting "{name}": {reason}')
-        else:
-            log("DONE", "SERVICE", f'Started "{name}"')
 
 # ---------------------------------------------
 # Docker compose operations
 # ---------------------------------------------
 def stop_docker(cfg):
-    root = Path(cfg["docker_root"])
+    docker_root = Path(cfg["docker_root"])
 
     for name in cfg["docker_compose_names"]:
-        compose = root / name / "docker-compose.yml"
+        compose = docker_root / name / "docker-compose.yml"
         log("INFO", "DOCKER", f'Stopping compose "{name}" -> {compose}')
 
         if not compose.exists():
@@ -110,59 +112,55 @@ def stop_docker(cfg):
             sys.exit(1)
 
         ok, out, err, code = run_cmd(f'docker compose -f "{compose}" stop')
-        if not ok:
+        if ok:
+            log("DONE", "DOCKER", f'Stopped "{name}"')
+        else:
             reason = err or out or f"Return code {code}"
             log("ERRO", "DOCKER", f'Failed stopping "{name}": {reason}')
             sys.exit(1)
 
-        log("DONE", "DOCKER", f'Stopped "{name}"')
-
 def start_docker(cfg):
-    root = Path(cfg["docker_root"])
+    docker_root = Path(cfg["docker_root"])
 
     for name in cfg["docker_compose_names"]:
-        compose = root / name / "docker-compose.yml"
+        compose = docker_root / name / "docker-compose.yml"
         log("INFO", "DOCKER", f'Starting compose "{name}" -> {compose}')
 
         if not compose.exists():
-            log("WARN", "DOCKER", f'Compose file missing, skipped: {compose}')
+            log("WARN", "DOCKER", f'Compose file missing: {compose}')
             continue
 
         ok, out, err, code = run_cmd(f'docker compose -f "{compose}" start')
-        if not ok:
+        if ok:
+            log("DONE", "DOCKER", f'Started "{name}"')
+        else:
             reason = err or out or f"Return code {code}"
             log("WARN", "DOCKER", f'Failed starting "{name}": {reason}')
-        else:
-            log("DONE", "DOCKER", f'Started "{name}"')
 
 # ---------------------------------------------
-# ZIP (no compression, no top folder)
+# ZIP helper
 # ---------------------------------------------
-def zip_path(src, dst_zip):
-    src = Path(src)
+def zip_folder(src: Path, dst_zip: Path):
     log("INFO", "BACKUP", f'Compressing "{src}"')
 
     with zipfile.ZipFile(dst_zip, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
         if src.is_file():
             zf.write(src, arcname=src.name)
         else:
-            for root, _, files in os.walk(src):
-                r = Path(root)
-                for f in files:
-                    full = r / f
-                    arc = full.relative_to(src)
-                    zf.write(full, arcname=str(arc))
+            for p in src.rglob("*"):
+                if p.is_file():
+                    zf.write(p, arcname=str(p.relative_to(src)))
 
     log("DONE", "BACKUP", f'Created {dst_zip}')
 
 # ---------------------------------------------
 # Backup paths
 # ---------------------------------------------
-def backup_all_paths(cfg, ts_folder):
+def backup_all_paths(cfg, timestamp):
     backup_root = Path(cfg["backup_root"])
-    timestamp = ts_folder
+    ts_folder = backup_root / timestamp
 
-    # 1) Services
+    # Services
     for svc in cfg["services"]:
         for src in svc["paths"]:
             src_path = Path(src)
@@ -171,21 +169,15 @@ def backup_all_paths(cfg, ts_folder):
                 continue
 
             drive = src_path.drive.replace(":", "")
+            rel = src_path.relative_to(src_path.anchor)  # full path after drive
 
-            dst_base = backup_root / timestamp / drive
-            (dst_base).mkdir(parents=True, exist_ok=True)
+            dst_dir = ts_folder / drive / rel.parent
+            dst_dir.mkdir(parents=True, exist_ok=True)
 
-            # parent folder name
-            parent = src_path.parent.name or "root"
-            service_dir = dst_base / parent
-            service_dir.mkdir(exist_ok=True)
+            dst_zip = dst_dir / (src_path.name + ".zip")
+            zip_folder(src_path, dst_zip)
 
-            zip_name = f"{src_path.name}.zip"
-            dst_zip = service_dir / zip_name
-
-            zip_path(src_path, dst_zip)
-
-    # 2) Docker
+    # Docker
     docker_root = Path(cfg["docker_root"])
     for name in cfg["docker_compose_names"]:
         src = docker_root / name
@@ -194,16 +186,13 @@ def backup_all_paths(cfg, ts_folder):
             continue
 
         drive = src.drive.replace(":", "")
+        rel = src.relative_to(src.anchor)
 
-        dst_base = backup_root / timestamp / drive
-        dst_base.mkdir(parents=True, exist_ok=True)
+        dst_dir = ts_folder / drive / rel.parent
+        dst_dir.mkdir(parents=True, exist_ok=True)
 
-        parent = src.parent.name or "docker"
-        docker_dir = dst_base / parent
-        docker_dir.mkdir(exist_ok=True)
-
-        dst_zip = docker_dir / f"{name}.zip"
-        zip_path(src, dst_zip)
+        dst_zip = dst_dir / (name + ".zip")
+        zip_folder(src, dst_zip)
 
 # ---------------------------------------------
 # Retention pruning
@@ -214,73 +203,62 @@ def prune_versions(cfg):
     min_v = cfg["retention_min_versions"]
     max_v = cfg["retention_max_versions"]
 
-    # check each drive folder
-    for drive_folder in root.iterdir():
-        if not drive_folder.is_dir():
+    # timestamp directories only
+    versions = []
+    for d in root.iterdir():
+        if not d.is_dir():
+            continue
+        try:
+            t = datetime.strptime(d.name, "%Y-%m-%d %H%M%S")
+            versions.append((d, t))
+        except:
             continue
 
-        # each entry is timestamp folder -> version
-        versions = []
-        for d in drive_folder.iterdir():
-            if not d.is_dir():
-                continue
-            try:
-                t = datetime.strptime(d.name, "%Y-%m-%d %H%M%S")
-                versions.append((d, t))
-            except:
-                continue
+    if not versions:
+        return
 
-        if not versions:
-            continue
+    versions.sort(key=lambda x: x[1])  # oldest first
+    now = datetime.now()
 
-        # sort oldest first
-        versions.sort(key=lambda x: x[1])
+    to_delete = []
 
-        # determine to delete
-        to_delete = []
+    # delete by days
+    for d, t in versions:
+        if (now - t).days > days:
+            to_delete.append((d, t))
 
-        # remove by days
-        now = datetime.now()
+    # enforce min versions
+    remain = len(versions) - len(to_delete)
+    if remain < min_v:
+        need_keep = min_v - remain
+        to_delete = to_delete[:-need_keep] if need_keep < len(to_delete) else []
+
+    # enforce max versions
+    if max_v > 0 and len(versions) > max_v:
+        excess = len(versions) - max_v
+        extra = versions[:excess]  # oldest
+        extra_dirs = {d for d, t in extra}
         for d, t in versions:
-            if (now - t).days > days:
+            if d in extra_dirs and (d, t) not in to_delete:
                 to_delete.append((d, t))
 
-        # enforce min versions
-        remain = len(versions) - len(to_delete)
-        if remain < min_v:
-            need_keep = min_v - remain
-            if need_keep >= len(to_delete):
-                to_delete = []
-            else:
-                to_delete = to_delete[:-need_keep]
-
-        # enforce max versions
-        if max_v > 0:
-            # if total versions > max_v
-            if len(versions) > max_v:
-                excess = len(versions) - max_v
-                # delete oldest entries
-                extra = versions[:excess]
-                for d, t in extra:
-                    if d not in [x[0] for x in to_delete]:
-                        to_delete.append((d, t))
-
-        # perform deletion
-        for d, t in to_delete:
-            log("INFO", "CLEANUP", f"Deleting old version {d}")
-            try:
-                shutil.rmtree(d)
-                log("DONE", "CLEANUP", f"Deleted {d}")
-            except Exception as e:
-                log("WARN", "CLEANUP", f"Failed deleting {d}: {e}")
+    # remove
+    for d, t in to_delete:
+        log("INFO", "CLEANUP", f"Deleting old version {d}")
+        try:
+            shutil.rmtree(d)
+            log("DONE", "CLEANUP", f"Deleted {d}")
+        except Exception as e:
+            log("WARN", "CLEANUP", f"Failed deleting {d}: {e}")
 
 # ---------------------------------------------
-# Backup process
+# Full backup process
 # ---------------------------------------------
 def do_backup(cfg):
+    print("=== Windows Service Backup Started ===")
+
     backup_root = Path(cfg["backup_root"])
     ts = timestamp_folder()
-
     ts_folder = backup_root / ts
     ts_folder.mkdir(parents=True, exist_ok=True)
 
@@ -289,26 +267,23 @@ def do_backup(cfg):
     CURRENT_LOG_PATH = ts_folder / "log.txt"
     LOG_FILE_HANDLE = open(CURRENT_LOG_PATH, "w", encoding="utf-8")
 
-    # Save config.json snapshot first
-    cfg_path = Path(CONFIG_FILE)
+    # Save config snapshot
     try:
-        shutil.copy2(cfg_path, ts_folder / "config.json")
+        shutil.copy2(CONFIG_FILE, ts_folder / "config.json")
         log("INFO", "CONFIG", "Saved config.json snapshot")
     except Exception as e:
         log("WARN", "CONFIG", f"Failed saving config snapshot: {e}")
 
-    # Stop services & docker
+    # Stop → Backup → Start
     stop_services(cfg)
     stop_docker(cfg)
 
-    # Backup all paths
     backup_all_paths(cfg, ts)
 
-    # Restart (ok if fails)
     start_services(cfg)
     start_docker(cfg)
 
-    # Retention
+    # Prune old versions
     prune_versions(cfg)
 
     log("DONE", "CORE", "Backup completed")
@@ -316,38 +291,38 @@ def do_backup(cfg):
     LOG_FILE_HANDLE.close()
     LOG_FILE_HANDLE = None
 
+    print("=== Windows Service Backup Completed ===")
+
 # ---------------------------------------------
 # Main
 # ---------------------------------------------
 def main():
     if len(sys.argv) < 2:
         print("Usage: python main.py [backup | stop | start]")
-        sys.exit(0)
+        return
 
     mode = sys.argv[1].lower()
     cfg = load_config()
 
-    # stop only
     if mode == "stop":
+        print("=== Windows Service Backup Started ===")
         stop_services(cfg)
         stop_docker(cfg)
-        print("Done.")
+        print("=== Windows Service Backup Completed ===")
         return
 
-    # start only
     if mode == "start":
+        print("=== Windows Service Backup Started ===")
         start_services(cfg)
         start_docker(cfg)
-        print("Done.")
+        print("=== Windows Service Backup Completed ===")
         return
 
-    # backup
     if mode == "backup":
         do_backup(cfg)
         return
 
     print(f"Unknown mode: {mode}")
 
-# ---------------------------------------------
 if __name__ == "__main__":
     main()
