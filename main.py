@@ -175,7 +175,7 @@ def backup_all_paths(cfg, ts_folder):
             drive = src_path.drive.replace(":", "")
             drives_used.add(drive)
 
-            dst_base = backup_root / drive / timestamp
+            dst_base = backup_root / timestamp / drive
             (dst_base).mkdir(parents=True, exist_ok=True)
 
             # parent folder name
@@ -199,7 +199,7 @@ def backup_all_paths(cfg, ts_folder):
         drive = src.drive.replace(":", "")
         drives_used.add(drive)
 
-        dst_base = backup_root / drive / timestamp
+        dst_base = backup_root / timestamp / drive
         dst_base.mkdir(parents=True, exist_ok=True)
 
         parent = src.parent.name or "docker"
@@ -287,10 +287,7 @@ def do_backup(cfg):
     backup_root = Path(cfg["backup_root"])
     ts = timestamp_folder()
 
-    # Determine the primary drive folder for config snapshot
-    # We'll use the drive of backup_root itself.
-    drive = backup_root.drive.replace(":", "")
-    ts_folder = backup_root / drive / ts
+    ts_folder = backup_root / ts
     ts_folder.mkdir(parents=True, exist_ok=True)
 
     # Open log file
