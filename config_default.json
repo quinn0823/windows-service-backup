@@ -1,5 +1,5 @@
 {
-    "backup_root": "D:",
+    "backup_root": "D:\\Backups",
     "retention_days": 7,
     "retention_min_copies": 3,
     "nssm": [
