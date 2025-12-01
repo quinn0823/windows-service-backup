@@ -27,10 +27,13 @@ Commands:
     start            Start services and docker containers
     startDocker      Start docker containers only
     startServices    Start services only
+    restart          Restart services and docker containers
+    restartDocker    Restart docker containers only
+    restartServices  Restart services only
     stop             Stop services and docker containers
     stopDocker       Stop docker containers only
     stopServices     Stop services only'''
-COMMANDS = ['backup', 'help', 'prune', 'start', 'startDocker', 'startServices', 'stop', 'stopDocker', 'stopServices']
+COMMANDS = ['backup', 'help', 'prune', 'start', 'startDocker', 'startServices', 'stop', 'stopDocker', 'stopServices', 'restart', 'restartDocker', 'restartServices']
 
 # ---------------------------------------------
 # Utility: timestamp
@@ -334,17 +337,17 @@ Copyright (c) 2025 Jonathan Chiu
     else:
         cfg = load_config()
 
-    if mode == 'backup' or mode == 'stop' or mode == 'stopServices':
+    if mode == 'backup' or mode == 'restart' or mode == 'restartServices' or mode == 'stop' or mode == 'stopServices':
         stop_services(cfg)
-    if mode == 'backup' or mode == 'stop' or mode == 'stopDocker':
+    if mode == 'backup' or mode == 'restart' or mode == 'restartServices' or mode == 'stop' or mode == 'stopDocker':
         stop_docker(cfg)
 
     if mode == 'backup':
         do_backup(cfg)
 
-    if mode == 'backup' or mode == 'start' or mode == 'startServices':
+    if mode == 'backup' or mode == 'restart' or mode == 'restartServices' or mode == 'start' or mode == 'startServices':
         start_services(cfg)
-    if mode == 'backup' or mode == 'start' or mode == 'startDocker':
+    if mode == 'backup' or mode == 'restart' or mode == 'restartDocker' or mode == 'start' or mode == 'startServices':
         start_docker(cfg)
 
     if mode == 'backup' or mode == 'prune':
