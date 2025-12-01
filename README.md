@@ -1,4 +1,4 @@
-# windows-service-backup
+# Windows Service Backup
 
 Gracefully stop Windows services and Docker containers, and safely backup or restore files.
 
