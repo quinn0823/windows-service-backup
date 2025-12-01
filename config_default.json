@@ -1,0 +1,17 @@
+{
+    "backup_root": "D:",
+    "retention_days": 7,
+    "retention_min_copies": 3,
+    "nssm": [
+        {
+            "service": "Jellyfin",
+            "paths": [
+                "C:\\ProgramData\\Jellyfin"
+            ]
+        }
+    ],
+    "docker_root": "C:\\ProgramData\\Docker",
+    "docker": [
+        "immich"
+    ]
+}
