@@ -93,9 +93,15 @@ def start_services(cfg):
         ok, out, err, code = run_cmd(f'net start "{name}"')
         if ok:
             log("DONE", "SERVICE", f'Started "{name}"')
-        else:
-            reason = err or out or f"Return code {code}"
-            log("WARN", "SERVICE", f'Failed starting "{name}": {reason}')
+            continue
+
+        combined = out + err
+        if "2182" in combined:
+            log("DONE", "SERVICE", f'"{name}" was already running')
+            continue
+
+        reason = err or out or f"Return code {code}"
+        log("WARN", "SERVICE", f'Failed starting "{name}": {reason}')
 
 # ---------------------------------------------
 # Docker compose operations
