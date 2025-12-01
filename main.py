@@ -13,44 +13,72 @@ import zipfile
 # ---------------------------------------------
 # Globals
 # ---------------------------------------------
-CONFIG_FILE = "config.json"
+CONFIG_FILE = 'config.json'
 LOG_FILE_HANDLE = None
 CURRENT_LOG_PATH = None
+LOG_QUEUE = []
+USAGE = '''Usage:
+    python main.py [command]
+
+Commands:
+    backup           Perform backup of services and docker
+    help             Show this help message
+    prune            Prune old backup versions
+    start            Start services and docker containers
+    startDocker      Start docker containers only
+    startServices    Start services only
+    stop             Stop services and docker containers
+    stopDocker       Stop docker containers only
+    stopServices     Stop services only'''
+COMMANDS = ['backup', 'help', 'prune', 'start', 'startDocker', 'startServices', 'stop', 'stopDocker', 'stopServices']
 
 # ---------------------------------------------
 # Utility: timestamp
 # ---------------------------------------------
 def now():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
 def timestamp_folder():
-    return datetime.now().strftime("%Y-%m-%d %H%M%S")
+    return datetime.now().strftime('%Y-%m-%d %H%M%S')
 
 # ---------------------------------------------
 # Logging
 # ---------------------------------------------
-def log(level, comp, msg):
-    """Print + optional log file write."""
-    line = f"{now()} [{level}] {comp:<7} {msg}"
-    print(line)
+def log(msg):
+    print(msg)
+
+    global LOG_FILE_HANDLE, LOG_QUEUE
 
     if LOG_FILE_HANDLE:
-        LOG_FILE_HANDLE.write(line + "\n")
+        if len(LOG_QUEUE) > 0:
+            for line in LOG_QUEUE:
+                LOG_FILE_HANDLE.write(line + '\n')
+            LOG_QUEUE.clear()
+        LOG_FILE_HANDLE.write(msg + '\n')
         LOG_FILE_HANDLE.flush()
+    else:
+        LOG_QUEUE.append(msg)
+
+def f_log(level, comp, msg):
+    line = f'{now()} [{level}] {comp:<7} {msg}'
+    log(line)
 
 # ---------------------------------------------
 # Load config
 # ---------------------------------------------
 def load_config():
+    f_log('INFO', 'CONFIG', f'Loading config...')
     cfg_path = Path(CONFIG_FILE)
     if not cfg_path.exists():
-        print(f"[ERRO] CONFIG config.json not found: {cfg_path.resolve()}")
+        f_log('ERRO', 'CONFIG', f'config not found: {cfg_path.resolve()}')
         sys.exit(1)
 
     try:
-        return json.loads(cfg_path.read_text(encoding="utf-8"))
+        cfg = json.loads(cfg_path.read_text(encoding='utf-8'))
+        f_log('INFO', 'CONFIG', f'Loaded {cfg}')
+        return cfg
     except Exception as e:
-        print(f"[ERRO] CONFIG Failed to parse config.json: {e}")
+        f_log('ERRO', 'CONFIG', f'Failed to parse config: {e}')
         sys.exit(1)
 
 # ---------------------------------------------
@@ -59,155 +87,155 @@ def load_config():
 def run_cmd(cmd, timeout=None):
     try:
         p = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
-        return p.returncode == 0, (p.stdout or "").strip(), (p.stderr or "").strip(), p.returncode
+        return p.returncode == 0, (p.stdout or '').strip(), (p.stderr or '').strip(), p.returncode
     except Exception as e:
-        return False, "", str(e), -1
+        return False, '', str(e), -1
 
 # ---------------------------------------------
 # Service operations
 # ---------------------------------------------
 def stop_services(cfg):
-    for svc in cfg["services"]:
-        name = svc["name"]
-        log("INFO", "SERVICE", f'Stopping "{name}"')
+    for svc in cfg['services']:
+        name = svc['name']
+        f_log('INFO', 'SERVICE', f'Stopping "{name}"...')
 
         ok, out, err, code = run_cmd(f'net stop "{name}"')
         if ok:
-            log("DONE", "SERVICE", f'Stopped "{name}"')
+            f_log('DONE', 'SERVICE', f'Stopped "{name}"')
             continue
 
         combined = out + err
-        if "3521" in combined:
-            log("DONE", "SERVICE", f'"{name}" was not running')
+        if '3521' in combined:
+            f_log('DONE', 'SERVICE', f'"{name}" was not running')
             continue
 
-        reason = err or out or f"Return code {code}"
-        log("ERRO", "SERVICE", f'Failed stopping "{name}": {reason}')
+        reason = err or out or f'Return code {code}'
+        f_log('ERRO', 'SERVICE', f'Failed stopping "{name}": {reason}')
         sys.exit(1)
 
 def start_services(cfg):
-    for svc in cfg["services"]:
-        name = svc["name"]
-        log("INFO", "SERVICE", f'Starting "{name}"')
+    for svc in cfg['services']:
+        name = svc['name']
+        f_log('INFO', 'SERVICE', f'Starting "{name}"...')
 
         ok, out, err, code = run_cmd(f'net start "{name}"')
         if ok:
-            log("DONE", "SERVICE", f'Started "{name}"')
+            f_log('DONE', 'SERVICE', f'Started "{name}"')
             continue
 
         combined = out + err
-        if "2182" in combined:
-            log("DONE", "SERVICE", f'"{name}" was already running')
+        if '2182' in combined:
+            f_log('DONE', 'SERVICE', f'"{name}" was already running')
             continue
 
-        reason = err or out or f"Return code {code}"
-        log("WARN", "SERVICE", f'Failed starting "{name}": {reason}')
+        reason = err or out or f'Return code {code}'
+        f_log('WARN', 'SERVICE', f'Failed starting "{name}": {reason}')
 
 # ---------------------------------------------
 # Docker compose operations
 # ---------------------------------------------
 def stop_docker(cfg):
-    docker_root = Path(cfg["docker_root"])
+    docker_root = Path(cfg['docker_root'])
 
-    for name in cfg["docker_compose_names"]:
-        compose = docker_root / name / "docker-compose.yml"
-        log("INFO", "DOCKER", f'Stopping compose "{name}" -> {compose}')
+    for name in cfg['docker_compose_names']:
+        compose = docker_root / name / 'docker-compose.yml'
+        f_log('INFO', 'DOCKER', f'Stopping compose "{name}" -> "{compose}"...')
 
         if not compose.exists():
-            log("ERRO", "DOCKER", f'Compose file not found: {compose}')
+            f_log('ERRO', 'DOCKER', f'Compose file not found')
             sys.exit(1)
 
         ok, out, err, code = run_cmd(f'docker compose -f "{compose}" stop')
         if ok:
-            log("DONE", "DOCKER", f'Stopped "{name}"')
+            f_log('DONE', 'DOCKER', f'Stopped "{name}"')
         else:
-            reason = err or out or f"Return code {code}"
-            log("ERRO", "DOCKER", f'Failed stopping "{name}": {reason}')
+            reason = err or out or f'Return code {code}'
+            f_log('ERRO', 'DOCKER', f'Failed stopping "{name}": {reason}')
             sys.exit(1)
 
 def start_docker(cfg):
-    docker_root = Path(cfg["docker_root"])
+    docker_root = Path(cfg['docker_root'])
 
-    for name in cfg["docker_compose_names"]:
-        compose = docker_root / name / "docker-compose.yml"
-        log("INFO", "DOCKER", f'Starting compose "{name}" -> {compose}')
+    for name in cfg['docker_compose_names']:
+        compose = docker_root / name / 'docker-compose.yml'
+        f_log('INFO', 'DOCKER', f'Starting compose "{name}" -> "{compose}"...')
 
         if not compose.exists():
-            log("WARN", "DOCKER", f'Compose file missing: {compose}')
+            f_log('WARN', 'DOCKER', f'Compose file missing')
             continue
 
         ok, out, err, code = run_cmd(f'docker compose -f "{compose}" start')
         if ok:
-            log("DONE", "DOCKER", f'Started "{name}"')
+            f_log('DONE', 'DOCKER', f'Started "{name}"')
         else:
-            reason = err or out or f"Return code {code}"
-            log("WARN", "DOCKER", f'Failed starting "{name}": {reason}')
+            reason = err or out or f'Return code {code}'
+            f_log('WARN', 'DOCKER', f'Failed starting "{name}": {reason}')
 
 # ---------------------------------------------
 # ZIP helper
 # ---------------------------------------------
 def zip_folder(src: Path, dst_zip: Path):
-    log("INFO", "BACKUP", f'Compressing "{src}"')
+    f_log('INFO', 'BACKUP', f'Compressing "{src}"...')
 
-    with zipfile.ZipFile(dst_zip, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
+    with zipfile.ZipFile(dst_zip, 'w', compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
         if src.is_file():
             zf.write(src, arcname=src.name)
         else:
-            for p in src.rglob("*"):
+            for p in src.rglob('*'):
                 if p.is_file():
                     zf.write(p, arcname=str(p.relative_to(src)))
 
-    log("DONE", "BACKUP", f'Created {dst_zip}')
+    f_log('DONE', 'BACKUP', f'Created "{dst_zip}"')
 
 # ---------------------------------------------
 # Backup paths
 # ---------------------------------------------
 def backup_all_paths(cfg, timestamp):
-    backup_root = Path(cfg["backup_root"])
+    backup_root = Path(cfg['backup_root'])
     ts_folder = backup_root / timestamp
 
     # Services
-    for svc in cfg["services"]:
-        for src in svc["paths"]:
+    for svc in cfg['services']:
+        for src in svc['paths']:
             src_path = Path(src)
             if not src_path.exists():
-                log("WARN", "BACKUP", f'Skipped missing path: {src_path}')
+                f_log('WARN', 'BACKUP', f'Skipped missing path: "{src_path}"')
                 continue
 
-            drive = src_path.drive.replace(":", "")
+            drive = src_path.drive.replace(':', '')
             rel = src_path.relative_to(src_path.anchor)  # full path after drive
 
             dst_dir = ts_folder / drive / rel.parent
             dst_dir.mkdir(parents=True, exist_ok=True)
 
-            dst_zip = dst_dir / (src_path.name + ".zip")
+            dst_zip = dst_dir / (src_path.name + '.zip')
             zip_folder(src_path, dst_zip)
 
     # Docker
-    docker_root = Path(cfg["docker_root"])
-    for name in cfg["docker_compose_names"]:
+    docker_root = Path(cfg['docker_root'])
+    for name in cfg['docker_compose_names']:
         src = docker_root / name
         if not src.exists():
-            log("WARN", "BACKUP", f'Skipped missing docker path: {src}')
+            f_log('WARN', 'BACKUP', f'Skipped missing path: "{src}"')
             continue
 
-        drive = src.drive.replace(":", "")
+        drive = src.drive.replace(':', '')
         rel = src.relative_to(src.anchor)
 
         dst_dir = ts_folder / drive / rel.parent
         dst_dir.mkdir(parents=True, exist_ok=True)
 
-        dst_zip = dst_dir / (name + ".zip")
+        dst_zip = dst_dir / (name + '.zip')
         zip_folder(src, dst_zip)
 
 # ---------------------------------------------
 # Retention pruning
 # ---------------------------------------------
 def prune_versions(cfg):
-    root = Path(cfg["backup_root"])
-    days = cfg["retention_days"]
-    min_v = cfg["retention_min_versions"]
-    max_v = cfg["retention_max_versions"]
+    root = Path(cfg['backup_root'])
+    days = cfg['retention_days']
+    min_v = cfg['retention_min_versions']
+    max_v = cfg['retention_max_versions']
 
     # timestamp directories only
     versions = []
@@ -215,7 +243,7 @@ def prune_versions(cfg):
         if not d.is_dir():
             continue
         try:
-            t = datetime.strptime(d.name, "%Y-%m-%d %H%M%S")
+            t = datetime.strptime(d.name, '%Y-%m-%d %H%M%S')
             versions.append((d, t))
         except:
             continue
@@ -250,106 +278,85 @@ def prune_versions(cfg):
 
     # remove
     for d, t in to_delete:
-        log("INFO", "CLEANUP", f"Deleting old version {d}")
+        f_log('INFO', 'PRUNE', f'Deleting old version "{t.strftime('%Y-%m-%d %H%M%S')}"...')
         try:
             shutil.rmtree(d)
-            log("DONE", "CLEANUP", f"Deleted {d}")
+            f_log('DONE', 'PRUNE', f'Deleted "{d}"')
         except Exception as e:
-            log("WARN", "CLEANUP", f"Failed deleting {d}: {e}")
+            f_log('WARN', 'PRUNE', f'Failed deleting "{d}": {e}')
 
 # ---------------------------------------------
 # Full backup process
 # ---------------------------------------------
 def do_backup(cfg):
-
-    backup_root = Path(cfg["backup_root"])
+    backup_root = Path(cfg['backup_root'])
     ts = timestamp_folder()
     ts_folder = backup_root / ts
     ts_folder.mkdir(parents=True, exist_ok=True)
 
     # Open log file
     global LOG_FILE_HANDLE, CURRENT_LOG_PATH
-    CURRENT_LOG_PATH = ts_folder / "log.txt"
-    LOG_FILE_HANDLE = open(CURRENT_LOG_PATH, "w", encoding="utf-8")
+    CURRENT_LOG_PATH = ts_folder / 'log.txt'
+    LOG_FILE_HANDLE = open(CURRENT_LOG_PATH, 'w', encoding='utf-8')
 
     # Save config snapshot
+    f_log('INFO', 'CONFIG', 'Copying config...')
     try:
-        shutil.copy2(CONFIG_FILE, ts_folder / "config.json")
-        log("INFO", "CONFIG", "Saved config.json snapshot")
+        shutil.copy2(CONFIG_FILE, ts_folder / 'config.json')
+        f_log('INFO', 'CONFIG', f'Created "{ts_folder / 'config.json'}"')
     except Exception as e:
-        log("WARN", "CONFIG", f"Failed saving config snapshot: {e}")
-
-    # Stop → Backup → Start
-    stop_services(cfg)
-    stop_docker(cfg)
+        f_log('WARN', 'CONFIG', f'Failed creating config: {e}')
 
     backup_all_paths(cfg, ts)
-
-    start_services(cfg)
-    start_docker(cfg)
-
-    # Prune old versions
-    prune_versions(cfg)
-
-    LOG_FILE_HANDLE.close()
-    LOG_FILE_HANDLE = None
 
 # ---------------------------------------------
 # Main
 # ---------------------------------------------
 def main():
-    print("""Windows Service Backup
+    log('''Windows Service Backup
 The MIT License (MIT)
 Copyright (c) 2025 Jonathan Chiu
-""")
+''')
 
-    usage = """Usage:
-    python main.py [command]
+    if len(sys.argv) == 1:
+        f_log('ERRO', 'MAIN', 'Missing command. Run "python main.py help" for usage.')
+        sys.exit(1)
 
-Commands:
-    backup           Perform backup of services and docker
-    help             Show this help message
-    start            Start services and docker containers
-    startDocker      Start docker containers only
-    startServices    Start services only
-    stop             Stop services and docker containers
-    stopDocker       Stop docker containers only
-    stopServices     Stop services only"""
+    mode = sys.argv[1]
+    if sys.argv[1] not in COMMANDS:
+        f_log('ERRO', 'MAIN', f'Unknown command "{sys.argv[1]}". Run "python main.py help" for usage.')
+        sys.exit(1)
 
-    if len(sys.argv) < 2:
-        print("[INFO] Run \"python main.py help\" for usage.")
+    cfg = {}
+
+    if mode == 'help':
+        log(USAGE)
     else:
-        mode = sys.argv[1].lower()
         cfg = load_config()
 
-        if mode == "backup":
-            do_backup(cfg)
+    if mode == 'backup' or mode == 'stop' or mode == 'stopServices':
+        stop_services(cfg)
+    if mode == 'backup' or mode == 'stop' or mode == 'stopDocker':
+        stop_docker(cfg)
 
-        elif mode == "help":
-            print(usage)
+    if mode == 'backup':
+        do_backup(cfg)
 
-        elif mode == "start":
-            start_services(cfg)
-            start_docker(cfg)
-        elif mode == "startDocker":
-            start_docker(cfg)
-        elif mode == "startServices":
-            start_services(cfg)
+    if mode == 'backup' or mode == 'start' or mode == 'startServices':
+        start_services(cfg)
+    if mode == 'backup' or mode == 'start' or mode == 'startDocker':
+        start_docker(cfg)
 
-        elif mode == "stop":
-            stop_services(cfg)
-            stop_docker(cfg)
-        elif mode == "stopDocker":
-            stop_docker(cfg)
-        elif mode == "stopServices":
-            stop_services(cfg)
+    if mode == 'backup' or mode == 'prune':
+        prune_versions(cfg)
 
-        else:
-            print(f"""[ERRO] Unknown command "{mode}"
-    [INFO] Run "python main.py help" for usage.""")
+    log('''
+Run complete.''')
 
-    print("""
-Run complete.""")
+    global LOG_FILE_HANDLE
+    if LOG_FILE_HANDLE:
+        LOG_FILE_HANDLE.close()
+        LOG_FILE_HANDLE = None
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
